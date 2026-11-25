@@ -1,0 +1,59 @@
+# Local/demo shape - the same three services (db, backend, frontend) that
+# run in Azure Container Instances via azure/app.bicep, just orchestrated by
+# compose instead of a container group. Keep this file and app.bicep in sync
+# when adding/removing a service or changing a port.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: seatsync-postgres
+    environment:
+      POSTGRES_DB: seatsync
+      POSTGRES_USER: seatsync
+      POSTGRES_PASSWORD: seatsync
+    ports:
+      - "5432:5432"
+    volumes:
+      - seatsync-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seatsync -d seatsync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: seatsync-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/seatsync
+      DB_USERNAME: seatsync
+      DB_PASSWORD: seatsync
+      JWT_SECRET: ${JWT_SECRET:-change-this-dev-only-secret-key-must-be-at-least-256-bits-long}
+      JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES:-1440}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:8081}
+      HOLD_DURATION_MINUTES: ${HOLD_DURATION_MINUTES:-5}
+      HOLD_EXPIRY_SCAN_INTERVAL_MS: ${HOLD_EXPIRY_SCAN_INTERVAL_MS:-30000}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-rzp_test_placeholder}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-placeholder_secret}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-placeholder_webhook_secret}
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the JS bundle at build time - see frontend/Dockerfile.
+        # Point this at wherever the *browser* will reach the backend, which
+        # for local compose is the host machine's own 8080.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    container_name: seatsync-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8081:8081"
+
+volumes:
+  seatsync-pgdata:
